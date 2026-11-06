@@ -57,6 +57,7 @@ struct WidgetCard: View {
     @State private var calendarEvents: [CalendarEventEntry] = []
     @State private var calendarEventsMessage = ""
     @State private var calendarEventDays: Set<Int> = []
+    @State private var calendarReloadPulse = 0
     var onMove: ((CGSize) -> Void)? = nil
     var onDragEnd: (() -> Void)? = nil
     var glassOverride: GlassStyle? = nil
@@ -101,7 +102,7 @@ struct WidgetCard: View {
     }
     private var calendarTaskKey: String? {
         guard let item, item.kind == .calendar else { return nil }
-        return "calendar|\(item.calendarMonthOffset)"
+        return "calendar|\(item.calendarMonthOffset)|\(calendarReloadPulse)"
     }
     private var toolboxTaskKey: String? {
         guard let item, item.kind == .toolbox else { return nil }
@@ -221,8 +222,8 @@ struct WidgetCard: View {
                     availableInterfaces = samples.map { $0.name }
                 }
                 tick += 1
-                if tick % 300 == 1 { await loadNetworkFacts() }
-                try? await Task.sleep(for: .seconds(1))
+                if tick % 150 == 1 { await loadNetworkFacts() }
+                try? await Task.sleep(for: .seconds(2))
             }
         }
         .task(id: musicTaskKey) {
@@ -240,7 +241,7 @@ struct WidgetCard: View {
                         artworkTint = artwork.flatMap(LiveFeed.averageColor(of:))
                     }
                 }
-                try? await Task.sleep(for: .seconds(3))
+                try? await Task.sleep(for: .seconds(5))
             }
         }
         .task(id: batteryTaskKey) {
@@ -436,6 +437,9 @@ struct WidgetCard: View {
             calendar
                 .contentShape(Rectangle())
                 .onTapGesture { performCalendarClick(item) }
+                .onReceive(NotificationCenter.default.publisher(for: Notification.Name("EKEventStoreChanged"))) { _ in
+                    calendarReloadPulse += 1
+                }
         case .weather:
             weather(item)
         case .stickyNote, .custom:
@@ -743,11 +747,7 @@ struct WidgetCard: View {
         return formatter.string(from: date)
     }
     private static func clockDate(_ date: Date, format: String, timeZone: TimeZone) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale.current
-        formatter.timeZone = timeZone
-        formatter.dateFormat = format
-        return formatter.string(from: date)
+        cachedFormatter(timeZone: timeZone, dateFormat: format).string(from: date)
     }
     private var configuredCalendar: Calendar {
         var calendar = Calendar.current
@@ -1302,15 +1302,21 @@ struct WidgetCard: View {
             else { content }
         }
     }
-    private static func time(in identifier: String, at date: Date = .now, use24Hour: Bool = false) -> String {
+    private static var formatterCache: [String: DateFormatter] = [:]
+    private static func cachedFormatter(timeZone: TimeZone, timeStyle: DateFormatter.Style? = nil, dateFormat: String? = nil, use24Hour: Bool = false) -> DateFormatter {
+        let tzID = timeZone.identifier
+        let key = timeStyle.map { "\(tzID)|style\($0.rawValue)|\(use24Hour)" } ?? "\(tzID)|fmt\(dateFormat ?? "")"
+        if let cached = formatterCache[key] { return cached }
         let formatter = DateFormatter()
-        formatter.timeZone = TimeZone(identifier: identifier)
-        if use24Hour {
-            formatter.dateFormat = "HH:mm"
-        } else {
-            formatter.timeStyle = .short
-        }
-        formatter.dateStyle = .none
+        formatter.timeZone = timeZone
+        if let timeStyle { formatter.timeStyle = timeStyle; formatter.dateStyle = .none; if use24Hour { formatter.dateFormat = "HH:mm" } }
+        else { formatter.dateFormat = dateFormat; formatter.dateStyle = .none }
+        if formatterCache.count > 48 { formatterCache.removeAll(keepingCapacity: true) }
+        formatterCache[key] = formatter
+        return formatter
+    }
+    private static func time(in identifier: String, at date: Date = .now, use24Hour: Bool = false) -> String {
+        let formatter = cachedFormatter(timeZone: TimeZone(identifier: identifier) ?? .current, timeStyle: use24Hour ? nil : .short, dateFormat: use24Hour ? "HH:mm" : nil, use24Hour: use24Hour)
         return formatter.string(from: date)
     }
     private static func isDaylight(in identifier: String, at date: Date) -> Bool {
@@ -1331,10 +1337,7 @@ struct WidgetCard: View {
         return "\(sign)\(text)h"
     }
     private static func dayLabel(in identifier: String, at date: Date = .now) -> String {
-        let formatter = DateFormatter()
-        formatter.timeZone = TimeZone(identifier: identifier)
-        formatter.dateFormat = "EEE · MMM d"
-        return formatter.string(from: date)
+        cachedFormatter(timeZone: TimeZone(identifier: identifier) ?? .current, dateFormat: "EEE · MMM d").string(from: date)
     }
     private func metric(_ kind: WidgetKind, value: String, detail: String) -> some View {
         let facts = Self.metricFacts(kind)
@@ -2360,7 +2363,7 @@ struct WidgetCard: View {
         default: batteryGaugeCard
         }
     }
-    private var batteryRingCard: some View {
+    private var batteryRingContent: some View {
         let stats = LiveFeed.batteryStats()
         let color = batteryColor(level: stats?.percent ?? 0, charging: stats?.charging == true)
         let ringSize: CGFloat = expanded ? 96 : (wide ? 84 : 72)
@@ -2383,7 +2386,7 @@ struct WidgetCard: View {
             feedFooter(stats?.charging == true ? "CHARGING · IOKIT LIVE" : (stats?.onAC == true ? "AC POWER · IOKIT LIVE" : "ON BATTERY · IOKIT LIVE"))
         }
     }
-    private var batteryDevicesCard: some View {
+    private var batteryDevicesContent: some View {
         let stats = LiveFeed.batteryStats()
         let color = batteryColor(level: stats?.percent ?? 0, charging: stats?.charging == true)
         let ringSize: CGFloat = expanded ? 84 : (wide ? 76 : (tiny ? 64 : 68))
@@ -2417,6 +2420,21 @@ struct WidgetCard: View {
         }
     }
     private var batteryGaugeCard: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { _ in
+            batteryGaugeContent
+        }
+    }
+    private var batteryRingCard: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { _ in
+            batteryRingContent
+        }
+    }
+    private var batteryDevicesCard: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { _ in
+            batteryDevicesContent
+        }
+    }
+    private var batteryGaugeContent: some View {
         let stats = LiveFeed.batteryStats()
         let level = stats?.percent ?? 0
         let color = batteryColor(level: level, charging: stats?.charging == true)
@@ -3134,10 +3152,33 @@ struct WidgetCard: View {
         if total >= 3600 { return String(format: "%d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60) }
         return String(format: "%d:%02d", total / 60, total % 60)
     }
+    private func syncAfterTransport(_ state: LiveFeed.PlaybackState, togglePlay: Bool, skip: Bool = false) {
+        LiveFeed.playbackControl(togglePlay ? "playpause" : (skip ? "next track" : "previous track"), app: state.app)
+        // Optimistic update so the widget reacts the instant the button is tapped.
+        var projected = state
+        if togglePlay { projected.isPlaying.toggle() }
+        if skip { projected.position = 0 }
+        playbackUpdatedAt = .now
+        playback = projected
+        Task {
+            try? await Task.sleep(for: .seconds(1))
+            let fresh = await LiveFeed.playbackState()
+            guard let fresh else { return }
+            playbackUpdatedAt = .now
+            let trackChanged = fresh.title != playback?.title || fresh.artist != playback?.artist
+            playback = fresh
+            if trackChanged {
+                artwork = nil
+                artworkTint = nil
+                artwork = await LiveFeed.artwork(for: fresh)
+                artworkTint = artwork.flatMap(LiveFeed.averageColor(of:))
+            }
+        }
+    }
     private func transportControls(_ state: LiveFeed.PlaybackState, compact: Bool) -> some View {
         HStack(spacing: compact ? 10 : 12) {
-            controlButton("backward.end.fill", diameter: compact ? 24 : 30) { LiveFeed.playbackControl("previous track", app: state.app) }
-            Button { LiveFeed.playbackControl("playpause", app: state.app) } label: {
+            controlButton("backward.end.fill", diameter: compact ? 24 : 30) { syncAfterTransport(state, togglePlay: false) }
+            Button { syncAfterTransport(state, togglePlay: true) } label: {
                 ZStack {
                     Circle().fill(accentColor)
                     Image(systemName: state.isPlaying ? "pause.fill" : "play.fill")
@@ -3147,7 +3188,7 @@ struct WidgetCard: View {
                 .frame(width: compact ? 30 : 38, height: compact ? 30 : 38)
                 .shadow(color: accentColor.opacity(0.45), radius: 7, y: 2)
             }.contentShape(Rectangle()).buttonStyle(FullAreaButtonStyle()).help(state.isPlaying ? "Pause" : "Play")
-            controlButton("forward.end.fill", diameter: compact ? 24 : 30) { LiveFeed.playbackControl("next track", app: state.app) }
+            controlButton("forward.end.fill", diameter: compact ? 24 : 30) { syncAfterTransport(state, togglePlay: false, skip: true) }
         }
     }
     private func controlButton(_ symbol: String, diameter: CGFloat, action: @escaping () -> Void) -> some View {
@@ -3264,7 +3305,8 @@ struct WidgetCard: View {
     }
     private func timer(_ kind: WidgetKind) -> some View {
         guard let id else { return AnyView(EmptyView()) }
-        return AnyView(TimelineView(.periodic(from: .now, by: 1)) { context in
+        let running = item?.timerRunning == true
+        return AnyView(TimelineView(.periodic(from: .now, by: running ? 1 : 30)) { context in
             let seconds = model.timerSeconds(id, at: context.date)
             VStack(alignment: .leading, spacing: 10) {
                 header(kind.rawValue, "timer")
