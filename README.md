@@ -17,7 +17,17 @@ Everything is tracked and rendered **locally**. The only network calls are the p
 - macOS 15 (Sequoia) or later
 - Xcode 16+ with the macOS SDK (for the Swift compiler — `xcode-select --install` is not enough)
 
-## Build and run
+## Install — one command
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/bhaveshdeveloper2007/littleboard/main/install.sh | sh
+```
+
+Clones this repo to `~/Littleboard`, builds the app in release mode, packages `build/Littleboard.app`, and opens it. Re-running the same command updates an existing install (it keeps your widgets — those live in Application Support regardless).
+
+> Requires Xcode (free, App Store) so the Swift compiler is available. The app is ad-hoc signed; if macOS warns on first open, right-click → **Open**, or allow it in Privacy & Security.
+
+## Build from source
 
 ```sh
 git clone https://github.com/bhaveshdeveloper2007/littleboard.git
@@ -25,7 +35,7 @@ cd littleboard
 ./scripts/build-and-run.sh
 ```
 
-That single script compiles the app in release mode, packages `build/Littleboard.app`, and opens it. Manual steps:
+That script compiles the app in release mode, packages `build/Littleboard.app`, and opens it. Manual steps:
 
 ```sh
 swift build -c release
