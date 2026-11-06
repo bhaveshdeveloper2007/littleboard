@@ -17,6 +17,12 @@ Everything is tracked and rendered **locally**. The only network calls are the p
 - macOS 15 (Sequoia) or later
 - Xcode 16+ with the macOS SDK (for the Swift compiler — `xcode-select --install` is not enough)
 
+## Download the ready-made app
+
+No Xcode? Grab **[Littleboard 1.0.0](https://github.com/bhaveshdeveloper2007/littleboard/releases/latest)** — download the DMG, open it, drag **Littleboard** into your Applications folder.
+
+> The app is ad-hoc signed, not notarized. On first launch, right-click → **Open**, or allow it in System Settings → Privacy & Security. Requires an Apple Silicon Mac on macOS 15 or later.
+
 ## Install — one command
 
 ```sh
